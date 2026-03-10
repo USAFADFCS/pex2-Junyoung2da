@@ -1,7 +1,7 @@
 /** CPUs.h
  * ===========================================================
- * Name: <Last Name, First Name>
- * Section: <Section>
+ * Name: Kim, Andrew
+ * Section: M3
  * Project: PEX2 - CPU Scheduling Simulator
  * Purpose: Declares the SharedVars and CpuParams structures that are
  *          shared between the main clock thread and all CPU scheduling

@@ -1,7 +1,7 @@
 /** CPUs.c
  * ===========================================================
- * Name: <Last Name, First Name>
- * Section: <Section>
+ * Name: Kim, Andrew
+ * Section: M3
  * Project: PEX2 - CPU Scheduling Simulator
  * Purpose: Implements six CPU scheduling algorithms as POSIX threads.
  *          Each thread follows the same pattern every timestep:
@@ -18,6 +18,7 @@
  * =========================================================== */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include "CPUs.h"
 #include "processQueue.h"
 
@@ -107,11 +108,50 @@ void* SJFcpu(void* param) {
     int threadNum = ((CpuParams*) param)->threadNumber;
     SharedVars* svars = ((CpuParams*) param)->svars;
 
-    // Process* p = NULL;  // TODO: uncomment when you implement this function
+    Process* p = NULL;  // TODO: uncomment when you implement this function
 
+
+    // This thread runs forever — one loop iteration = one simulation timestep.
     while (1) {
         sem_wait(svars->cpuSems[threadNum]);
+        // ── Selection (only when idle) ───────────────────────────────────
+        // SJF is non preemptive
+        if (p == NULL) {
+            // ── Sync point 1: wait for main to start this timestep ──────────
+            pthread_mutex_lock(&(svars->readyQLock));
 
+            // Index 0 = head of the list = the process that has been waiting
+            // remove the process with the shortest burstRemaining
+            p = qRemove(&(svars->readyQ), qShortest(&(svars->readyQ)));
+
+            if (p == NULL) {
+                // readyQ was empty — CPU stays idle this tick.
+                printf("No process to schedule\n");
+            } else {
+                printf("Scheduling PID %d\n", p->PID);
+            }
+
+            pthread_mutex_unlock(&(svars->readyQLock));
+        }
+
+        // ── Execution: one unit of work ──────────────────────────────────
+        // If we have a process (carried over from a prior tick or just
+        // selected above), burn one unit of its remaining CPU burst.
+        if (p != NULL) {
+            p->burstRemaining--;
+
+            if (p->burstRemaining == 0) {
+                // Process is done — move it to finishedQ so main can
+                // compute and print wait-time statistics at simulation end.
+                pthread_mutex_lock(&(svars->finishedQLock));
+                qInsert(&(svars->finishedQ), p);
+                pthread_mutex_unlock(&(svars->finishedQLock));
+
+                // CPU is now idle; it will select a new process next tick.
+                p = NULL;
+            }
+        }
+        // ── Sync point 2: signal main that this CPU is done ─────────────
         sem_post(svars->mainSem);
     }
 }
@@ -126,11 +166,50 @@ void* NPPcpu(void* param) {
     int threadNum = ((CpuParams*) param)->threadNumber;
     SharedVars* svars = ((CpuParams*) param)->svars;
 
-    // Process* p = NULL;  // TODO: uncomment when you implement this function
+    Process* p = NULL;  // TODO: uncomment when you implement this function
 
+
+    // This thread runs forever — one loop iteration = one simulation timestep.
     while (1) {
         sem_wait(svars->cpuSems[threadNum]);
+        // ── Selection (only when idle) ───────────────────────────────────
+        // NPP is non preemptive
+        if (p == NULL) {
+            // ── Sync point 1: wait for main to start this timestep ──────────
+            pthread_mutex_lock(&(svars->readyQLock));
 
+            // Index 0 = head of the list = the process that has been waiting
+            // remove the process with the highest priority
+            p = qRemove(&(svars->readyQ), qPriority(&(svars->readyQ)));
+
+            if (p == NULL) {
+                // readyQ was empty — CPU stays idle this tick.
+                printf("No process to schedule\n");
+            } else {
+                printf("Scheduling PID %d\n", p->PID);
+            }
+
+            pthread_mutex_unlock(&(svars->readyQLock));
+        }
+
+        // ── Execution: one unit of work ──────────────────────────────────
+        // If we have a process (carried over from a prior tick or just
+        // selected above), burn one unit of its remaining CPU burst.
+        if (p != NULL) {
+            p->burstRemaining--;
+
+            if (p->burstRemaining == 0) {
+                // Process is done — move it to finishedQ so main can
+                // compute and print wait-time statistics at simulation end.
+                pthread_mutex_lock(&(svars->finishedQLock));
+                qInsert(&(svars->finishedQ), p);
+                pthread_mutex_unlock(&(svars->finishedQLock));
+
+                // CPU is now idle; it will select a new process next tick.
+                p = NULL;
+            }
+        }
+        // ── Sync point 2: signal main that this CPU is done ─────────────
         sem_post(svars->mainSem);
     }
 }
@@ -144,11 +223,82 @@ void* RRcpu(void* param) {
     int threadNum = ((CpuParams*) param)->threadNumber;
     SharedVars* svars = ((CpuParams*) param)->svars;
 
-    // Process* p = NULL;  // TODO: uncomment when you implement this function
+    // int to track if a context switch is necessary due to quantum running out.
+    int quant = 0;
 
+    Process* p = NULL;  // TODO: uncomment when you implement this function
+
+
+    // This thread runs forever — one loop iteration = one simulation timestep.
     while (1) {
         sem_wait(svars->cpuSems[threadNum]);
+        // ── Selection (only when idle) ───────────────────────────────────
+        // NPP is non preemptive
+        if (p == NULL) {
+            // ── Sync point 1: wait for main to start this timestep ──────────
+            pthread_mutex_lock(&(svars->readyQLock));
 
+            // Index 0 = head of the list = the process that has been waiting
+            // remove the process at head of the queue
+            p = qRemove(&(svars->readyQ), 0);
+
+            if (p == NULL) {
+                // readyQ was empty — CPU stays idle this tick.
+                printf("No process to schedule\n");
+            } else {
+                printf("Scheduling PID %d\n", p->PID);
+            }
+
+            pthread_mutex_unlock(&(svars->readyQLock));
+        }
+
+        // if quantum has run out for the current process on the CPU
+        if ((p != NULL) && (quant != 0) && ((quant % svars->quantum) == 0) && (p->burstRemaining != 0)){
+            //set quant back to 0
+            quant = 0;
+            //set requeued to TRUE
+            p->requeued = true;
+
+            //lock the mutex so we can put it back in
+            pthread_mutex_lock(&(svars->readyQLock));
+            qInsert(&(svars->readyQ), p); // put the old process in back of queue
+            p = qRemove(&(svars->readyQ), 0); // pull another processs from head of queue
+            // print what is being scheduled
+            if (p == NULL) {
+                // readyQ was empty — CPU stays idle this tick.
+                printf("No process to schedule\n");
+            }
+            else {
+                printf("Scheduling PID %d\n", p->PID);
+            }
+            
+            pthread_mutex_unlock(&(svars->readyQLock)); //unlock ready queue
+
+        }
+
+        // ── Execution: one unit of work ──────────────────────────────────
+        // If we have a process (carried over from a prior tick or just
+        // selected above), burn one unit of its remaining CPU burst.
+        if (p != NULL) {
+            p->burstRemaining--;
+            // add one to quant to allow the thread to determine if if quantum is ending
+            quant++;
+
+            if (p->burstRemaining == 0) {
+                // Process is done — move it to finishedQ so main can
+                // compute and print wait-time statistics at simulation end.
+                pthread_mutex_lock(&(svars->finishedQLock));
+                qInsert(&(svars->finishedQ), p);
+                pthread_mutex_unlock(&(svars->finishedQLock));
+
+                //reset quantum to 0.
+                quant = 0;
+
+                // CPU is now idle; it will select a new process next tick.
+                p = NULL;
+            }
+        }
+        // ── Sync point 2: signal main that this CPU is done ─────────────
         sem_post(svars->mainSem);
     }
 }
@@ -162,11 +312,80 @@ void* SRTFcpu(void* param) {
     int threadNum = ((CpuParams*) param)->threadNumber;
     SharedVars* svars = ((CpuParams*) param)->svars;
 
-    // Process* p = NULL;  // TODO: uncomment when you implement this function
 
+    Process* p = NULL;  // TODO: uncomment when you implement this function
+
+
+    // This thread runs forever — one loop iteration = one simulation timestep.
     while (1) {
         sem_wait(svars->cpuSems[threadNum]);
+        // ── Selection (only when idle) ───────────────────────────────────
+        // NPP is non preemptive
+        if (p == NULL) {
+            // ── Sync point 1: wait for main to start this timestep ──────────
+            pthread_mutex_lock(&(svars->readyQLock));
 
+            // Index 0 = head of the list = the process that has been waiting
+            // remove the process at head of the queue
+            p = qRemove(&(svars->readyQ), qShortest(&(svars->readyQ)));
+
+            if (p == NULL) {
+                // readyQ was empty — CPU stays idle this tick.
+                printf("No process to schedule\n");
+            } else {
+                printf("Scheduling PID %d\n", p->PID);
+            }
+
+            pthread_mutex_unlock(&(svars->readyQLock));
+        }
+
+        // if there is another process that enters and is shorter, put that in CPU
+        if ((p != NULL)){
+            //lock
+            pthread_mutex_lock(&(svars->readyQLock));
+            // check to see if there is a shorter remaining burst time process
+            if ((qShortestBR(&(svars->readyQ)) < p->burstRemaining)){
+                //set requeued to TRUE
+                p->requeued = true;
+
+                qInsert(&(svars->readyQ), p); // put the current process in back of queue
+                p = qRemove(&(svars->readyQ), qShortest(&(svars->readyQ))); // pull SRT process
+                // print what is being scheduled
+                if (p == NULL) {
+                    // readyQ was empty — CPU stays idle this tick.
+                    printf("No process to schedule\n");
+                }
+                else {
+                    printf("Scheduling PID %d\n", p->PID);
+                }
+            
+                pthread_mutex_unlock(&(svars->readyQLock)); //unlock ready queue
+            }
+            else{
+                pthread_mutex_unlock(&(svars->readyQLock)); //unlock ready queue
+            }
+
+
+        }
+
+        // ── Execution: one unit of work ──────────────────────────────────
+        // If we have a process (carried over from a prior tick or just
+        // selected above), burn one unit of its remaining CPU burst.
+        if (p != NULL) {
+            p->burstRemaining--;
+
+            if (p->burstRemaining == 0) {
+                // Process is done — move it to finishedQ so main can
+                // compute and print wait-time statistics at simulation end.
+                pthread_mutex_lock(&(svars->finishedQLock));
+                qInsert(&(svars->finishedQ), p);
+                pthread_mutex_unlock(&(svars->finishedQLock));
+
+                // CPU is now idle; it will select a new process next tick.
+                p = NULL;
+            }
+        }
+        // ── Sync point 2: signal main that this CPU is done ─────────────
         sem_post(svars->mainSem);
     }
 }
@@ -180,11 +399,80 @@ void* PPcpu(void* param) {
     int threadNum = ((CpuParams*) param)->threadNumber;
     SharedVars* svars = ((CpuParams*) param)->svars;
 
-    // Process* p = NULL;  // TODO: uncomment when you implement this function
 
+    Process* p = NULL;  // TODO: uncomment when you implement this function
+
+
+    // This thread runs forever — one loop iteration = one simulation timestep.
     while (1) {
         sem_wait(svars->cpuSems[threadNum]);
+        // ── Selection (only when idle) ───────────────────────────────────
+        // NPP is non preemptive
+        if (p == NULL) {
+            // ── Sync point 1: wait for main to start this timestep ──────────
+            pthread_mutex_lock(&(svars->readyQLock));
 
+            // Index 0 = head of the list = the process that has been waiting
+            // remove the process at head of the queue
+            p = qRemove(&(svars->readyQ), qPriority(&(svars->readyQ)));
+
+            if (p == NULL) {
+                // readyQ was empty — CPU stays idle this tick.
+                printf("No process to schedule\n");
+            } else {
+                printf("Scheduling PID %d\n", p->PID);
+            }
+
+            pthread_mutex_unlock(&(svars->readyQLock));
+        }
+
+        // if there is another process that enters and is higher priority, do context switch
+        if ((p != NULL)){
+            //lock
+            pthread_mutex_lock(&(svars->readyQLock));
+            if ((qGetPriority(&(svars->readyQ)) < p->priority)){
+                //set requeued to TRUE
+                p->requeued = true;
+
+                qInsert(&(svars->readyQ), p); // put the current process in back of queue
+                // get the highest priority process from the ready list
+                p = qRemove(&(svars->readyQ), qPriority(&(svars->readyQ)));
+                // print what is being scheduled
+                if (p == NULL) {
+                    // readyQ was empty — CPU stays idle this tick.
+                    printf("No process to schedule\n");
+                }
+                else {
+                    printf("Scheduling PID %d\n", p->PID);
+                }
+            
+                pthread_mutex_unlock(&(svars->readyQLock)); //unlock ready queue
+            }
+            else{
+                pthread_mutex_unlock(&(svars->readyQLock)); //unlock ready queue
+            }
+
+
+        }
+
+        // ── Execution: one unit of work ──────────────────────────────────
+        // If we have a process (carried over from a prior tick or just
+        // selected above), burn one unit of its remaining CPU burst.
+        if (p != NULL) {
+            p->burstRemaining--;
+
+            if (p->burstRemaining == 0) {
+                // Process is done — move it to finishedQ so main can
+                // compute and print wait-time statistics at simulation end.
+                pthread_mutex_lock(&(svars->finishedQLock));
+                qInsert(&(svars->finishedQ), p);
+                pthread_mutex_unlock(&(svars->finishedQLock));
+
+                // CPU is now idle; it will select a new process next tick.
+                p = NULL;
+            }
+        }
+        // ── Sync point 2: signal main that this CPU is done ─────────────
         sem_post(svars->mainSem);
     }
 }
