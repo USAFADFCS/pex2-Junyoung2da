@@ -14,7 +14,8 @@
  *          All accesses to readyQ and finishedQ are protected by their
  *          respective mutex locks.
  * ===========================================================
- * Documentation Statement: <describe any help received>
+ * Documentation Statement: no help received except for instructor provided
+ *                          resources like the slideshow.
  * =========================================================== */
 
 #include <stdio.h>
